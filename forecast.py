@@ -189,88 +189,127 @@ for i in range(4):
 cur_rem  = proj.get(0, 0) or 0
 cur_tot  = mtd_co + cur_rem
 grand    = cur_tot + sum(proj.get(i, 0) or 0 for i in range(1, 4))
-cur_month_label = co_start_cur.strftime('%B %Y')
+cur_month_label = co_start_cur.strftime('%b %Y')
+m1_label = (co_start_cur + pd.DateOffset(months=1)).strftime('%b %Y')
+m2_label = (co_start_cur + pd.DateOffset(months=2)).strftime('%b %Y')
+m3_label = (co_start_cur + pd.DateOffset(months=3)).strftime('%b %Y')
 
-# ── 11. Generate HTML ─────────────────────────────────────────────────────────
-def fmt_usd(v):
-    if v is None or (isinstance(v, float) and np.isnan(v)): return 'N/A'
-    return f'${v:,.0f}'
-def fmt_pct(v):
-    if v is None or (isinstance(v, float) and np.isnan(v)): return 'N/A'
-    return f'{v:.2%}'
 def orig_combo(s):
     if s['min'] is None: return 'N/A'
     return f"{s['min']} – {s['avg']:.1f} – {s['max']}"
 
-rows_forecast = [
-    ('Flow Rate M+1', fmt_pct(fr[1]), ''),
-    ('Flow Rate M+2', fmt_pct(fr[2]), ''),
-    ('Flow Rate M+3', fmt_pct(fr[3]), ''),
-    (f'{cur_month_label} — MTD Actual',  fmt_usd(mtd_co),  ''),
-    (f'{cur_month_label} — Projected Remaining', fmt_usd(cur_rem), ''),
-    (f'{cur_month_label} — TOTAL', fmt_usd(cur_tot), 'subtotal'),
-]
-for i in range(1, 4):
-    co_s = co_start_cur + pd.DateOffset(months=i)
-    rows_forecast.append((f'{co_s.strftime("%B %Y")} — Projected', fmt_usd(proj.get(i)), ''))
-rows_forecast.append(('Grand Total (4 months)', fmt_usd(grand), 'grand'))
+# ── 11. Load + update history ─────────────────────────────────────────────────
+out_dir      = Path('docs')
+out_dir.mkdir(exist_ok=True)
+history_file = out_dir / 'history.json'
+history      = json.loads(history_file.read_text()) if history_file.exists() else []
 
-rows_orig = []
-for i in range(4):
-    s = orig_stats[i]
-    rows_orig.append((s['label'], orig_combo(s)))
+run_date_str = RUN_DATE.strftime('%Y-%m-%d')
+new_entry = {
+    'run_date':   run_date_str,
+    'fr_m1':      round(fr[1], 4),
+    'fr_m2':      round(fr[2], 4),
+    'fr_m3':      round(fr[3], 4),
+    'cur_month':  cur_month_label,
+    'mtd_actual': round(mtd_co, 0),
+    'cur_proj':   round(cur_rem, 0),
+    'cur_total':  round(cur_tot, 0),
+    'm1_month':   m1_label,
+    'm1_proj':    round(proj.get(1, 0) or 0, 0),
+    'm2_month':   m2_label,
+    'm2_proj':    round(proj.get(2, 0) or 0, 0),
+    'm3_month':   m3_label,
+    'm3_proj':    round(proj.get(3, 0) or 0, 0),
+    'grand_total':round(grand, 0),
+    'orig_cur':   orig_combo(orig_stats[0]),
+    'orig_m1':    orig_combo(orig_stats[1]),
+    'orig_m2':    orig_combo(orig_stats[2]),
+    'orig_m3':    orig_combo(orig_stats[3]),
+}
+# Deduplicate: replace existing entry for same run_date, otherwise append
+existing_idx = next((i for i, h in enumerate(history) if h['run_date'] == run_date_str), None)
+if existing_idx is not None:
+    history[existing_idx] = new_entry
+else:
+    history.append(new_entry)
 
-forecast_rows_html = ''
-for label, value, cls in rows_forecast:
-    row_cls = f' class="{cls}"' if cls else ''
-    forecast_rows_html += f'<tr{row_cls}><td>{label}</td><td>{value}</td></tr>\n'
+history_file.write_text(json.dumps(history, indent=2))
+print(f'✓ History updated ({len(history)} entries).')
 
-orig_rows_html = ''
-for label, value in rows_orig:
-    orig_rows_html += f'<tr><td>{label}</td><td>{value}</td></tr>\n'
-
-# Load history to build historical table
-history_file = Path('docs') / 'history.json'
-history_data = []
-if history_file.exists():
+# ── 12. Build HTML — Excel-style layout ───────────────────────────────────────
+def fu(v):   # format USD
     try:
-        history_data = json.loads(history_file.read_text())
-    except:
-        history_data = []
+        return f'${float(v):,.0f}' if v not in (None, '') else '—'
+    except: return '—'
+def fp(v):   # format percent
+    try:
+        return f'{float(v):.2%}' if v not in (None, '') else '—'
+    except: return '—'
 
-# Build historical metrics table with run dates as columns
-def fmt_usd_table(v):
-    if v is None or (isinstance(v, float) and np.isnan(v)): return '—'
-    return f'${v:,.0f}'
-def fmt_pct_table(v):
-    if v is None or (isinstance(v, float) and np.isnan(v)): return '—'
-    return f'{v:.2%}'
+# Use most-recent entry's month labels as column headers
+latest_h = history[-1]
+col_cur   = latest_h.get('cur_month', 'Cur Mo')
+col_m1    = latest_h.get('m1_month',  'M+1')
+col_m2    = latest_h.get('m2_month',  'M+2')
+col_m3    = latest_h.get('m3_month',  'M+3')
 
-# Build header row with run dates
-hist_header = '<tr><th>Metric</th>'
-for h in history_data:
-    run_d = pd.Timestamp(h['run_date']).strftime('%m/%d')
-    hist_header += f'<th>{run_d}</th>'
-hist_header += '</tr>\n'
+# ── Table 1: Forecast comparison (matches "Apr Comparison" sheet) ──────────────
+t1_cols = ['Run Date','FR M+1','FR M+2','FR M+3',
+           f'{col_cur} Actual', f'{col_cur} Proj Rem', f'{col_cur} TOTAL',
+           f'{col_m1} Proj', f'{col_m2} Proj', f'{col_m3} Proj', 'Grand Total']
 
-# Build metric rows
-hist_rows = ''
-metrics_config = [
-    ('Flow Rate M+1', lambda h: fmt_pct_table(h['fr_m1']), ''),
-    ('Flow Rate M+2', lambda h: fmt_pct_table(h['fr_m2']), ''),
-    ('Flow Rate M+3', lambda h: fmt_pct_table(h['fr_m3']), ''),
-    ('MTD Actual', lambda h: fmt_usd_table(h['mtd_actual']), ''),
-    ('Cur Mo Proj Rem', lambda h: fmt_usd_table(h['cur_proj']), ''),
-    ('Current Month Total', lambda h: fmt_usd_table(h['cur_total']), 'subtotal'),
-    ('Grand Total (4mo)', lambda h: fmt_usd_table(h['grand_total']), 'grand'),
-]
+t1_header = ''.join(f'<th>{c}</th>' for c in t1_cols)
 
-for metric_name, getter, row_class in metrics_config:
-    row_cls = f' class="{row_class}"' if row_class else ''
-    hist_rows += f'<tr{row_cls}><td>{metric_name}</td>'
-    for h in history_data:
-        hist_rows += f'<td>{getter(h)}</td>'
-    hist_rows += '</tr>\n'
+t1_rows_html = ''
+for h in history:
+    is_latest = h['run_date'] == run_date_str
+    row_class = ' class="latest"' if is_latest else ''
+    rd = pd.Timestamp(h['run_date']).strftime('%m/%d/%Y')
+    cells = [
+        rd,
+        fp(h.get('fr_m1')),
+        fp(h.get('fr_m2')),
+        fp(h.get('fr_m3')),
+        fu(h.get('mtd_actual')),
+        fu(h.get('cur_proj')),
+        fu(h.get('cur_total')),
+        fu(h.get('m1_proj')),
+        fu(h.get('m2_proj')),
+        fu(h.get('m3_proj')),
+        fu(h.get('grand_total')),
+    ]
+    # Highlight cur_total (col 7) and grand_total (col 11)
+    tds = ''
+    for ci, cell in enumerate(cells):
+        if ci == 0:
+            tds += f'<td class="date-col">{cell}</td>'
+        elif ci == 6:
+            tds += f'<td class="subtotal-col">{cell}</td>'
+        elif ci == 10:
+            tds += f'<td class="grand-col">{cell}</td>'
+        else:
+            tds += f'<td>{cell}</td>'
+    t1_rows_html += f'<tr{row_class}>{tds}</tr>\n'
+
+# ── Table 2: Origday stats (matches "Origday Stats" sheet) ────────────────────
+t2_cols = ['Run Date',
+           f'{col_cur} Origday (min–avg–max)',
+           f'{col_m1} Origday (min–avg–max)',
+           f'{col_m2} Origday (min–avg–max)',
+           f'{col_m3} Origday (min–avg–max)']
+
+t2_header = ''.join(f'<th>{c}</th>' for c in t2_cols)
+
+t2_rows_html = ''
+for h in history:
+    is_latest = h['run_date'] == run_date_str
+    row_class = ' class="latest"' if is_latest else ''
+    rd = pd.Timestamp(h['run_date']).strftime('%m/%d/%Y')
+    cells = [rd,
+             h.get('orig_cur','—'), h.get('orig_m1','—'),
+             h.get('orig_m2','—'), h.get('orig_m3','—')]
+    tds = f'<td class="date-col">{cells[0]}</td>' + ''.join(f'<td>{c}</td>' for c in cells[1:])
+    t2_rows_html += f'<tr{row_class}>{tds}</tr>\n'
 
 html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -279,88 +318,72 @@ html = f"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Chargeoff Daily Forecast — {RUN_DATE.strftime('%B %d, %Y')}</title>
 <style>
-  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-         background: #f4f6f9; margin: 0; padding: 24px; color: #1a1a2e; }}
-  h1   {{ color: #1F4E79; margin-bottom: 4px; }}
-  .subtitle {{ color: #666; font-size: 0.9em; margin-bottom: 28px; }}
-  .section {{ margin-bottom: 32px; }}
-  .card {{ background: white; border-radius: 10px; padding: 20px;
-           box-shadow: 0 2px 8px rgba(0,0,0,0.08); }}
-  .card h2 {{ font-size: 1em; color: #1F4E79; margin: 0 0 14px; text-transform: uppercase;
-              letter-spacing: 0.05em; border-bottom: 2px solid #DCE6F1; padding-bottom: 8px; }}
-  table {{ border-collapse: collapse; font-size: 0.92em; }}
-  th    {{ background: #1F4E79; color: white; padding: 8px 12px; text-align: right; border: 1px solid #ccc; }}
-  th:first-child {{ text-align: left; }}
-  td    {{ padding: 7px 12px; border: 1px solid #eef0f4; text-align: right; }}
-  td:first-child {{ text-align: left; font-weight: 500; }}
-  tr:nth-child(even) td {{ background: #f8fafc; }}
-  tr.subtotal td {{ background: #DCE6F1 !important; font-weight: 600; }}
-  tr.grand    td {{ background: #1F4E79 !important; color: white; font-weight: 700; font-size: 1.02em; }}
-  .hist-table {{ overflow-x: auto; max-width: 100%; }}
-  .hist-table table {{ width: 100%; min-width: 600px; }}
-  .meta {{ margin-top: 16px; font-size: 0.8em; color: #999; }}
+  body        {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+                background: #f4f6f9; margin: 0; padding: 24px; color: #1a1a2e; }}
+  h1          {{ color: #1F4E79; margin-bottom: 4px; }}
+  .subtitle   {{ color: #666; font-size: 0.9em; margin-bottom: 28px; }}
+  .section    {{ margin-bottom: 32px; }}
+  .card       {{ background: white; border-radius: 10px; padding: 20px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.08); overflow-x: auto; }}
+  .card h2    {{ font-size: 1em; color: #1F4E79; margin: 0 0 14px; text-transform: uppercase;
+                letter-spacing: 0.05em; border-bottom: 2px solid #DCE6F1; padding-bottom: 8px; }}
+  table       {{ border-collapse: collapse; font-size: 0.88em; white-space: nowrap; }}
+  th          {{ background: #1F4E79; color: white; padding: 8px 12px; text-align: right;
+                border: 1px solid #173d61; position: sticky; top: 0; }}
+  th:first-child {{ text-align: left; min-width: 90px; }}
+  td          {{ padding: 6px 12px; border: 1px solid #e2e8f0; text-align: right; }}
+  td.date-col {{ text-align: left; font-weight: 500; color: #334; }}
+  td.subtotal-col {{ background: #DCE6F1 !important; font-weight: 700; }}
+  td.grand-col    {{ background: #1F4E79 !important; color: white; font-weight: 700; }}
+  tr:nth-child(even) td:not(.subtotal-col):not(.grand-col) {{ background: #f8fafc; }}
+  tr.latest td    {{ outline: 2px solid #2196F3; outline-offset: -1px; }}
+  tr.latest td.date-col::after {{ content: " ★"; color: #2196F3; }}
+  .meta       {{ margin-top: 16px; font-size: 0.8em; color: #999; }}
 </style>
 </head>
 <body>
 <h1>Chargeoff Daily Forecast</h1>
-<div class="subtitle">Latest Run: <strong>{RUN_DATE.strftime('%A, %B %d, %Y')}</strong>
-  &nbsp;|&nbsp; Calibration window: Oct 2025 – Mar 2026 (6 months)</div>
+<div class="subtitle">
+  Latest Run: <strong>{RUN_DATE.strftime('%A, %B %d, %Y')}</strong>
+  &nbsp;|&nbsp; Calibration: Oct 2025 – Mar 2026 (6 months)
+  &nbsp;|&nbsp; {len(history)} days tracked
+</div>
 
 <div class="section">
   <div class="card">
-    <h2>Historical Forecast Trends (Run Dates Left → Right)</h2>
-    <div class="hist-table">
-      <table>
-        {hist_header}
-        {hist_rows}
-      </table>
-    </div>
+    <h2>📊 Forecast Comparison (newest row = latest run)</h2>
+    <table>
+      <thead><tr>{t1_header}</tr></thead>
+      <tbody>{t1_rows_html}</tbody>
+    </table>
   </div>
 </div>
 
 <div class="section">
   <div class="card">
-    <h2>Latest Run — Origday Range (min – avg – max)</h2>
-    <table style="width: 100%;">
-      <tr><th>Month</th><th>Origday as of Run Date</th></tr>
-      {orig_rows_html}
+    <h2>📐 Origday Stats (min – avg – max)</h2>
+    <table>
+      <thead><tr>{t2_header}</tr></thead>
+      <tbody>{t2_rows_html}</tbody>
     </table>
     <p style="font-size:0.78em;color:#999;margin-top:10px;">
-      origday = days elapsed since advance origination (120 = chargeoff)
+      origday = days since advance origination — 120 = chargeoff day
     </p>
   </div>
 </div>
 
 <div class="meta">
   Generated by GitHub Actions &nbsp;|&nbsp;
-  Calibration: empirical OPTIMAL M+X rates (sum actual / sum raw) &nbsp;|&nbsp;
-  {len(history_data)} days tracked
+  Empirical OPTIMAL M+X flow rates (sum actual ÷ sum raw balance)
+  &nbsp;|&nbsp; ★ = today's run
 </div>
 </body>
 </html>
 """
 
 try:
-    out_dir = Path('docs')
-    out_dir.mkdir(exist_ok=True)
     (out_dir / 'index.html').write_text(html)
     print(f'✓ Report written to docs/index.html')
-
-    # Also save a JSON snapshot for history
-    history_file = out_dir / 'history.json'
-    history = json.loads(history_file.read_text()) if history_file.exists() else []
-    history.append({
-        'run_date':   RUN_DATE.strftime('%Y-%m-%d'),
-        'fr_m1':      round(fr[1], 4),
-        'fr_m2':      round(fr[2], 4),
-        'fr_m3':      round(fr[3], 4),
-        'mtd_actual': round(mtd_co, 0),
-        'cur_proj':   round(cur_rem, 0),
-        'cur_total':  round(cur_tot, 0),
-        'grand_total':round(grand, 0),
-    })
-    history_file.write_text(json.dumps(history, indent=2))
-    print(f'✓ History updated ({len(history)} entries).')
     print('\n✓ Forecast complete!')
 except Exception as e:
     print(f'✗ Failed to write report: {e}', file=sys.stderr)
