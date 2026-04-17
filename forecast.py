@@ -240,6 +240,9 @@ else:
 history_file.write_text(json.dumps(history, indent=2))
 print(f'✓ History updated ({len(history)} entries).')
 
+# Rolling 31-day window for display only (history.json retains full history)
+display_history = history[-31:]
+
 # ── 12. Build HTML — Excel-style layout ───────────────────────────────────────
 def fu(v):   # format USD
     try:
@@ -263,7 +266,7 @@ def _month_divider(label, ncols):
 
 t1_rows_html = ''
 prev_month_t1 = None
-for h in history:
+for h in display_history:
     cur_mo = h.get('cur_month', '')
     if cur_mo != prev_month_t1:
         t1_rows_html += _month_divider(cur_mo, len(t1_cols))
@@ -292,7 +295,7 @@ t2_header = ''.join(f'<th>{c}</th>' for c in t2_cols)
 
 t2_rows_html = ''
 prev_month_t2 = None
-for h in history:
+for h in display_history:
     cur_mo = h.get('cur_month', '')
     if cur_mo != prev_month_t2:
         t2_rows_html += _month_divider(cur_mo, len(t2_cols))
@@ -343,7 +346,7 @@ html = f"""<!DOCTYPE html>
 <div class="subtitle">
   Latest Run: <strong>{RUN_DATE.strftime('%A, %B %d, %Y')}</strong>
   &nbsp;|&nbsp; Calibration: {pd.Timestamp(CALIB_START).strftime('%b %Y')} – {pd.Timestamp(CALIB_END).strftime('%b %Y')} (6 months)
-  &nbsp;|&nbsp; {len(history)} days tracked
+  &nbsp;|&nbsp; showing last {len(display_history)} of {len(history)} days
 </div>
 
 <div class="section">
