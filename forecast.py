@@ -253,23 +253,34 @@ def fp(v):   # format percent
         return f'{float(v):.2%}' if v not in (None, '') else '—'
     except: return '—'
 
+# ── Build month-specific sub-header row ───────────────────────────────────────
+def t1_subheader(h):
+    c0 = h.get('cur_month','Cur Mo')
+    m1 = h.get('m1_month', 'M+1')
+    m2 = h.get('m2_month', 'M+2')
+    m3 = h.get('m3_month', 'M+3')
+    cols = ['Run Date','FR M+1','FR M+2','FR M+3',
+            f'{c0} Actual', f'{c0} Proj Rem', f'{c0} TOTAL',
+            f'{m1} Proj', f'{m2} Proj', f'{m3} Proj', 'Grand Total']
+    return '<tr class="sub-header">' + ''.join(f'<th>{c}</th>' for c in cols) + '</tr>\n'
+
+def t2_subheader(h):
+    c0 = h.get('cur_month','Cur Mo')
+    m1 = h.get('m1_month', 'M+1')
+    m2 = h.get('m2_month', 'M+2')
+    m3 = h.get('m3_month', 'M+3')
+    cols = ['Run Date',
+            f'{c0} Origday (min–avg–max)', f'{m1} Origday (min–avg–max)',
+            f'{m2} Origday (min–avg–max)', f'{m3} Origday (min–avg–max)']
+    return '<tr class="sub-header">' + ''.join(f'<th>{c}</th>' for c in cols) + '</tr>\n'
+
 # ── Table 1: Forecast comparison ──────────────────────────────────────────────
-# Column headers are generic (month-agnostic) so they stay correct as months roll
-t1_cols = ['Run Date', 'FR M+1', 'FR M+2', 'FR M+3',
-           'Cur Mo Actual', 'Cur Mo Proj Rem', 'Cur Mo TOTAL',
-           'M+1 Proj', 'M+2 Proj', 'M+3 Proj', 'Grand Total']
-t1_header = ''.join(f'<th>{c}</th>' for c in t1_cols)
-
-def _month_divider(label, ncols):
-    return (f'<tr class="month-divider">'
-            f'<td colspan="{ncols}">── {label} ──</td></tr>\n')
-
 t1_rows_html = ''
 prev_month_t1 = None
 for h in display_history:
     cur_mo = h.get('cur_month', '')
     if cur_mo != prev_month_t1:
-        t1_rows_html += _month_divider(cur_mo, len(t1_cols))
+        t1_rows_html += t1_subheader(h)   # new month = new header row
         prev_month_t1 = cur_mo
     is_latest = h['run_date'] == run_date_str
     row_class = ' class="latest"' if is_latest else ''
@@ -288,17 +299,12 @@ for h in display_history:
     t1_rows_html += f'<tr{row_class}>{tds}</tr>\n'
 
 # ── Table 2: Origday stats ─────────────────────────────────────────────────────
-t2_cols = ['Run Date',
-           'Cur Mo Origday (min–avg–max)', 'M+1 Origday (min–avg–max)',
-           'M+2 Origday (min–avg–max)',    'M+3 Origday (min–avg–max)']
-t2_header = ''.join(f'<th>{c}</th>' for c in t2_cols)
-
 t2_rows_html = ''
 prev_month_t2 = None
 for h in display_history:
     cur_mo = h.get('cur_month', '')
     if cur_mo != prev_month_t2:
-        t2_rows_html += _month_divider(cur_mo, len(t2_cols))
+        t2_rows_html += t2_subheader(h)   # new month = new header row
         prev_month_t2 = cur_mo
     is_latest = h['run_date'] == run_date_str
     row_class = ' class="latest"' if is_latest else ''
@@ -335,9 +341,8 @@ html = f"""<!DOCTYPE html>
   tr:nth-child(even) td:not(.subtotal-col):not(.grand-col) {{ background: #f8fafc; }}
   tr.latest td    {{ outline: 2px solid #2196F3; outline-offset: -1px; }}
   tr.latest td.date-col::after {{ content: " ★"; color: #2196F3; }}
-  tr.month-divider td {{ background: #E8F0FE !important; color: #1F4E79;
-                         font-weight: 700; text-align: center; font-size: 0.85em;
-                         letter-spacing: 0.08em; padding: 5px 12px; }}
+  tr.sub-header th   {{ background: #2E6DA4; font-size: 0.83em; padding: 6px 10px;
+                         border-top: 3px solid #1F4E79; }}
   .meta       {{ margin-top: 16px; font-size: 0.8em; color: #999; }}
 </style>
 </head>
@@ -353,7 +358,6 @@ html = f"""<!DOCTYPE html>
   <div class="card">
     <h2>📊 Forecast Comparison (newest row = latest run)</h2>
     <table>
-      <thead><tr>{t1_header}</tr></thead>
       <tbody>{t1_rows_html}</tbody>
     </table>
   </div>
@@ -363,7 +367,6 @@ html = f"""<!DOCTYPE html>
   <div class="card">
     <h2>📐 Origday Stats (min – avg – max)</h2>
     <table>
-      <thead><tr>{t2_header}</tr></thead>
       <tbody>{t2_rows_html}</tbody>
     </table>
     <p style="font-size:0.78em;color:#999;margin-top:10px;">
