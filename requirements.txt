@@ -1,4 +1,5 @@
-snowflake-snowpark-python
+snowflake-snowpark-python[pandas]
+pyarrow
 pandas
 numpy
 openpyxl
