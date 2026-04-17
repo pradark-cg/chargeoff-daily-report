@@ -10,24 +10,34 @@ from datetime import date
 from pathlib import Path
 from snowflake.snowpark import Session
 
-# ── 1. Connect ────────────────────────────────────────────────────────────────
-session = Session.builder.configs({
-    'account':   os.environ['SF_ACCOUNT'],
-    'user':      os.environ['SF_USER'],
-    'password':  os.environ['SF_PASSWORD'],
-    'role':      os.environ['SF_ROLE'],
-    'warehouse': os.environ['SF_WAREHOUSE'],
-    'database':  os.environ['SF_DATABASE'],
-    'schema':    os.environ['SF_SCHEMA'],
-}).create()
-print('Connected to Snowflake.')
+try:
+    # ── 1. Connect ────────────────────────────────────────────────────────────────
+    session = Session.builder.configs({
+        'account':   os.environ.get('SF_ACCOUNT'),
+        'user':      os.environ.get('SF_USER'),
+        'password':  os.environ.get('SF_PASSWORD'),
+        'role':      os.environ.get('SF_ROLE'),
+        'warehouse': os.environ.get('SF_WAREHOUSE'),
+        'database':  os.environ.get('SF_DATABASE'),
+        'schema':    os.environ.get('SF_SCHEMA'),
+    }).create()
+    print('✓ Connected to Snowflake.')
+except Exception as e:
+    print(f'✗ Connection failed: {e}', file=sys.stderr)
+    sys.exit(1)
 
 # ── 2. Run date — use latest available date in dailybalance ───────────────────
-max_date_row = session.sql(
-    "select max(cast(date as date)) as max_date from creditgenie.public.dailybalance"
-).to_pandas()
-RUN_DATE = pd.Timestamp(max_date_row['MAX_DATE'].iloc[0])
-print(f'Run Date: {RUN_DATE.date()}')
+try:
+    max_date_row = session.sql(
+        "select max(cast(date as date)) as max_date from creditgenie.public.dailybalance"
+    ).to_pandas()
+    if max_date_row.empty or max_date_row['MAX_DATE'].iloc[0] is None:
+        raise ValueError("No data in dailybalance")
+    RUN_DATE = pd.Timestamp(max_date_row['MAX_DATE'].iloc[0])
+    print(f'✓ Run Date: {RUN_DATE.date()}')
+except Exception as e:
+    print(f'✗ Failed to get run date: {e}', file=sys.stderr)
+    sys.exit(1)
 
 # ── 3. Calibration window (last 6 fully mature CO months) ─────────────────────
 run_day         = RUN_DATE.day
@@ -278,23 +288,33 @@ html = f"""<!DOCTYPE html>
 </html>
 """
 
-out_dir = Path('docs')
-out_dir.mkdir(exist_ok=True)
-(out_dir / 'index.html').write_text(html)
-print(f'Report written to docs/index.html')
+try:
+    out_dir = Path('docs')
+    out_dir.mkdir(exist_ok=True)
+    (out_dir / 'index.html').write_text(html)
+    print(f'✓ Report written to docs/index.html')
 
-# Also save a JSON snapshot for history
-history_file = out_dir / 'history.json'
-history = json.loads(history_file.read_text()) if history_file.exists() else []
-history.append({
-    'run_date':   RUN_DATE.strftime('%Y-%m-%d'),
-    'fr_m1':      round(fr[1], 4),
-    'fr_m2':      round(fr[2], 4),
-    'fr_m3':      round(fr[3], 4),
-    'mtd_actual': round(mtd_co, 0),
-    'cur_proj':   round(cur_rem, 0),
-    'cur_total':  round(cur_tot, 0),
-    'grand_total':round(grand, 0),
-})
-history_file.write_text(json.dumps(history, indent=2))
-print(f'History updated ({len(history)} entries).')
+    # Also save a JSON snapshot for history
+    history_file = out_dir / 'history.json'
+    history = json.loads(history_file.read_text()) if history_file.exists() else []
+    history.append({
+        'run_date':   RUN_DATE.strftime('%Y-%m-%d'),
+        'fr_m1':      round(fr[1], 4),
+        'fr_m2':      round(fr[2], 4),
+        'fr_m3':      round(fr[3], 4),
+        'mtd_actual': round(mtd_co, 0),
+        'cur_proj':   round(cur_rem, 0),
+        'cur_total':  round(cur_tot, 0),
+        'grand_total':round(grand, 0),
+    })
+    history_file.write_text(json.dumps(history, indent=2))
+    print(f'✓ History updated ({len(history)} entries).')
+    print('\n✓ Forecast complete!')
+except Exception as e:
+    print(f'✗ Failed to write report: {e}', file=sys.stderr)
+    sys.exit(1)
+finally:
+    try:
+        session.close()
+    except:
+        pass

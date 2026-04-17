@@ -8,6 +8,9 @@ on:
 permissions:
   contents: write              # needed to push docs/ back to repo
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   run-forecast:
     runs-on: ubuntu-latest
@@ -17,8 +20,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0       # full history so we can push back
-        env:
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -43,7 +44,12 @@ jobs:
           SF_WAREHOUSE: ${{ secrets.SF_WAREHOUSE }}
           SF_DATABASE:  ${{ secrets.SF_DATABASE }}
           SF_SCHEMA:    ${{ secrets.SF_SCHEMA }}
-        run: python forecast.py
+        run: |
+          python forecast.py
+          if [ $? -ne 0 ]; then
+            echo "Forecast failed"
+            exit 1
+          fi
 
       - name: Commit and push report
         run: |
