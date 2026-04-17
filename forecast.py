@@ -240,8 +240,12 @@ else:
 history_file.write_text(json.dumps(history, indent=2))
 print(f'✓ History updated ({len(history)} entries).')
 
-# Rolling 31-day window for display only (history.json retains full history)
-display_history = history[-31:]
+# Dynamic window: show entries from current month only
+# (history.json retains full history for all time)
+visible_months = {
+    co_start_cur.strftime('%b %Y'),
+}
+display_history = [h for h in history if h.get('cur_month') in visible_months]
 
 # ── 12. Build HTML — Excel-style layout ───────────────────────────────────────
 def fu(v):   # format USD
