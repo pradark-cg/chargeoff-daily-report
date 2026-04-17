@@ -39,10 +39,14 @@ except Exception as e:
     print(f'✗ Failed to get run date: {e}', file=sys.stderr)
     sys.exit(1)
 
-# ── 3. Calibration window (last 6 fully mature CO months) ─────────────────────
-run_day         = RUN_DATE.day
-CALIB_START     = '2025-10-01'
-CALIB_END       = '2026-03-01'
+# ── 3. Calibration window — auto-rolls: always last 6 completed CO months ─────
+run_day          = RUN_DATE.day
+_cur_per         = RUN_DATE.to_period('M')
+_calib_end_per   = _cur_per - 1          # last fully completed month
+_calib_start_per = _calib_end_per - 5    # 6-month window (start..end inclusive)
+CALIB_START      = _calib_start_per.to_timestamp().strftime('%Y-%m-%d')
+CALIB_END        = _calib_end_per.to_timestamp().strftime('%Y-%m-%d')
+print(f'✓ Calibration window: {CALIB_START} → {CALIB_END}')
 calib_co_months = pd.date_range(CALIB_START, CALIB_END, freq='MS')
 
 calib_configs = []
@@ -246,67 +250,57 @@ def fp(v):   # format percent
         return f'{float(v):.2%}' if v not in (None, '') else '—'
     except: return '—'
 
-# Use most-recent entry's month labels as column headers
-latest_h = history[-1]
-col_cur   = latest_h.get('cur_month', 'Cur Mo')
-col_m1    = latest_h.get('m1_month',  'M+1')
-col_m2    = latest_h.get('m2_month',  'M+2')
-col_m3    = latest_h.get('m3_month',  'M+3')
-
-# ── Table 1: Forecast comparison (matches "Apr Comparison" sheet) ──────────────
-t1_cols = ['Run Date','FR M+1','FR M+2','FR M+3',
-           f'{col_cur} Actual', f'{col_cur} Proj Rem', f'{col_cur} TOTAL',
-           f'{col_m1} Proj', f'{col_m2} Proj', f'{col_m3} Proj', 'Grand Total']
-
+# ── Table 1: Forecast comparison ──────────────────────────────────────────────
+# Column headers are generic (month-agnostic) so they stay correct as months roll
+t1_cols = ['Run Date', 'FR M+1', 'FR M+2', 'FR M+3',
+           'Cur Mo Actual', 'Cur Mo Proj Rem', 'Cur Mo TOTAL',
+           'M+1 Proj', 'M+2 Proj', 'M+3 Proj', 'Grand Total']
 t1_header = ''.join(f'<th>{c}</th>' for c in t1_cols)
 
+def _month_divider(label, ncols):
+    return (f'<tr class="month-divider">'
+            f'<td colspan="{ncols}">── {label} ──</td></tr>\n')
+
 t1_rows_html = ''
+prev_month_t1 = None
 for h in history:
-    is_latest = h['run_date'] == run_date_str
-    row_class = ' class="latest"' if is_latest else ''
-    rd = pd.Timestamp(h['run_date']).strftime('%m/%d/%Y')
-    cells = [
-        rd,
-        fp(h.get('fr_m1')),
-        fp(h.get('fr_m2')),
-        fp(h.get('fr_m3')),
-        fu(h.get('mtd_actual')),
-        fu(h.get('cur_proj')),
-        fu(h.get('cur_total')),
-        fu(h.get('m1_proj')),
-        fu(h.get('m2_proj')),
-        fu(h.get('m3_proj')),
-        fu(h.get('grand_total')),
-    ]
-    # Highlight cur_total (col 7) and grand_total (col 11)
-    tds = ''
-    for ci, cell in enumerate(cells):
-        if ci == 0:
-            tds += f'<td class="date-col">{cell}</td>'
-        elif ci == 6:
-            tds += f'<td class="subtotal-col">{cell}</td>'
-        elif ci == 10:
-            tds += f'<td class="grand-col">{cell}</td>'
-        else:
-            tds += f'<td>{cell}</td>'
-    t1_rows_html += f'<tr{row_class}>{tds}</tr>\n'
-
-# ── Table 2: Origday stats (matches "Origday Stats" sheet) ────────────────────
-t2_cols = ['Run Date',
-           f'{col_cur} Origday (min–avg–max)',
-           f'{col_m1} Origday (min–avg–max)',
-           f'{col_m2} Origday (min–avg–max)',
-           f'{col_m3} Origday (min–avg–max)']
-
-t2_header = ''.join(f'<th>{c}</th>' for c in t2_cols)
-
-t2_rows_html = ''
-for h in history:
+    cur_mo = h.get('cur_month', '')
+    if cur_mo != prev_month_t1:
+        t1_rows_html += _month_divider(cur_mo, len(t1_cols))
+        prev_month_t1 = cur_mo
     is_latest = h['run_date'] == run_date_str
     row_class = ' class="latest"' if is_latest else ''
     rd = pd.Timestamp(h['run_date']).strftime('%m/%d/%Y')
     cells = [rd,
-             h.get('orig_cur','—'), h.get('orig_m1','—'),
+             fp(h.get('fr_m1')), fp(h.get('fr_m2')), fp(h.get('fr_m3')),
+             fu(h.get('mtd_actual')), fu(h.get('cur_proj')), fu(h.get('cur_total')),
+             fu(h.get('m1_proj')), fu(h.get('m2_proj')), fu(h.get('m3_proj')),
+             fu(h.get('grand_total'))]
+    tds = ''
+    for ci, cell in enumerate(cells):
+        if   ci == 0:  tds += f'<td class="date-col">{cell}</td>'
+        elif ci == 6:  tds += f'<td class="subtotal-col">{cell}</td>'
+        elif ci == 10: tds += f'<td class="grand-col">{cell}</td>'
+        else:          tds += f'<td>{cell}</td>'
+    t1_rows_html += f'<tr{row_class}>{tds}</tr>\n'
+
+# ── Table 2: Origday stats ─────────────────────────────────────────────────────
+t2_cols = ['Run Date',
+           'Cur Mo Origday (min–avg–max)', 'M+1 Origday (min–avg–max)',
+           'M+2 Origday (min–avg–max)',    'M+3 Origday (min–avg–max)']
+t2_header = ''.join(f'<th>{c}</th>' for c in t2_cols)
+
+t2_rows_html = ''
+prev_month_t2 = None
+for h in history:
+    cur_mo = h.get('cur_month', '')
+    if cur_mo != prev_month_t2:
+        t2_rows_html += _month_divider(cur_mo, len(t2_cols))
+        prev_month_t2 = cur_mo
+    is_latest = h['run_date'] == run_date_str
+    row_class = ' class="latest"' if is_latest else ''
+    rd = pd.Timestamp(h['run_date']).strftime('%m/%d/%Y')
+    cells = [rd, h.get('orig_cur','—'), h.get('orig_m1','—'),
              h.get('orig_m2','—'), h.get('orig_m3','—')]
     tds = f'<td class="date-col">{cells[0]}</td>' + ''.join(f'<td>{c}</td>' for c in cells[1:])
     t2_rows_html += f'<tr{row_class}>{tds}</tr>\n'
@@ -338,6 +332,9 @@ html = f"""<!DOCTYPE html>
   tr:nth-child(even) td:not(.subtotal-col):not(.grand-col) {{ background: #f8fafc; }}
   tr.latest td    {{ outline: 2px solid #2196F3; outline-offset: -1px; }}
   tr.latest td.date-col::after {{ content: " ★"; color: #2196F3; }}
+  tr.month-divider td {{ background: #E8F0FE !important; color: #1F4E79;
+                         font-weight: 700; text-align: center; font-size: 0.85em;
+                         letter-spacing: 0.08em; padding: 5px 12px; }}
   .meta       {{ margin-top: 16px; font-size: 0.8em; color: #999; }}
 </style>
 </head>
@@ -345,7 +342,7 @@ html = f"""<!DOCTYPE html>
 <h1>Chargeoff Daily Forecast</h1>
 <div class="subtitle">
   Latest Run: <strong>{RUN_DATE.strftime('%A, %B %d, %Y')}</strong>
-  &nbsp;|&nbsp; Calibration: Oct 2025 – Mar 2026 (6 months)
+  &nbsp;|&nbsp; Calibration: {pd.Timestamp(CALIB_START).strftime('%b %Y')} – {pd.Timestamp(CALIB_END).strftime('%b %Y')} (6 months)
   &nbsp;|&nbsp; {len(history)} days tracked
 </div>
 
