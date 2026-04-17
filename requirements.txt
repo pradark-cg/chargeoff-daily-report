@@ -1,0 +1,5 @@
+snowflake-snowpark-python
+pandas
+numpy
+openpyxl
+xlsxwriter
